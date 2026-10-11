@@ -12,6 +12,7 @@ const DAY = 24 * HOUR;
 const INTERVAL = [0, 4 * HOUR, DAY, 3 * DAY, 7 * DAY, 16 * DAY, 35 * DAY, 80 * DAY, 180 * DAY];
 const MAX_BOX = INTERVAL.length - 1;
 const KNOWN_BOX = 3;
+const ARROW_DELAY = 2000; // ms before a new line's arrow appears
 
 // ---------- persistence ----------
 // studies: id -> { name, pgn, chapters: [{ name, color, off }], t, del? }
@@ -512,7 +513,7 @@ function loadLine(again = false) {
   $('#d-play').hidden = false;
   $('#d-done').hidden = true;
   $('#btn-hint').disabled = $('#btn-show').disabled = false;
-  setMsg(cur.learn ? "New line — follow the arrows to learn it." : `Play your moves as ${ref.ch.color}.`, cur.learn ? 'info' : '');
+  setMsg(cur.learn ? "New line — think first, then an arrow shows the move." : `Play your moves as ${ref.ch.color}.`, cur.learn ? 'info' : '');
   renderMoves();
   renderNotes();
   later(advance, 350);
@@ -557,8 +558,14 @@ function advance() {
   syncBoard(true);
   const shapes = studyShapes();
   if (cur.learn) {
-    shapes.push({ orig: sq(nodes[cur.pos].uci)[0], dest: sq(nodes[cur.pos].uci)[1], brush: 'blue' });
-    setMsg(`Play <b>${moveText(cur.pos)}</b> (the blue arrow).`, 'info');
+    // give a moment to think before the answer shows
+    const pos = cur.pos;
+    setMsg('Your move — have a think. The arrow shows in 2 seconds.', 'info');
+    later(() => {
+      if (cur.pos !== pos || cur.finished || cur.shown) return;
+      cg.setAutoShapes([...studyShapes(), { orig: sq(nodes[pos].uci)[0], dest: sq(nodes[pos].uci)[1], brush: 'blue' }]);
+      setMsg(`Play <b>${moveText(pos)}</b> (the blue arrow).`, 'info');
+    }, ARROW_DELAY);
   } else if (cur.pos > 0 && !cur.finished) {
     setMsg(`Your move${nodes[cur.pos - 1] ? ` — after <b>${moveText(cur.pos - 1)}</b>` : ''}.`, '');
   }
