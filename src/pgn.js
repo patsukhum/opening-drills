@@ -132,6 +132,13 @@ export function parsePgn(text) {
     .map((x) => ({ tags: x.tags, root: x.root, errors: x.errors }));
 }
 
+// "Repertoire: 4.e3", "Repertoire: 4.Qc2" → the shared "Repertoire" prefix, or ''
+export function sharedPrefix(games) {
+  const evs = games.map((g) => g.tags.Event || '');
+  const m = evs[0].match(/^(.+?): /);
+  return games.length > 1 && m && evs.every((e) => e.startsWith(m[0])) ? m[1] : '';
+}
+
 export function chapterName(tags, i) {
   if (tags.ChapterName) return tags.ChapterName;
   const ev = tags.Event && tags.Event !== '?' ? tags.Event : '';
@@ -141,7 +148,8 @@ export function chapterName(tags, i) {
 }
 
 // The side you play rarely branches; the opponent's side does.
-export function guessColor(root, name = '') {
+export function guessColor(root, name = '', tags = {}) {
+  if (/^(white|black)$/i.test(tags.Orientation || '')) return tags.Orientation.toLowerCase();
   let w = 0;
   let b = 0;
   const walk = (n) => {

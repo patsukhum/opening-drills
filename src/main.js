@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
-import { parsePgn, chapterName, guessColor, extractLines, lineLabel, START } from './pgn.js';
+import { parsePgn, chapterName, sharedPrefix, guessColor, extractLines, lineLabel, START } from './pgn.js';
 import { createSync, POLGAR_SYNC_KEY } from './sync.js';
 
 const STORE_KEY = 'opening-drills-v1';
@@ -47,7 +47,7 @@ function studyView(id) {
   const seen = new Set();
   const chapters = games.map((g, i) => {
     const cfg = st.chapters[i] || {};
-    const color = cfg.color || guessColor(g.root, chapterName(g.tags, i));
+    const color = cfg.color || guessColor(g.root, chapterName(g.tags, i), g.tags);
     const fenTag = g.root.fen === START ? '' : hash(g.root.fen) + '/';
     const lines = extractLines(g.root, color, +db.settings.depth)
       .map((l) => ({ ...l, key: `${id}:${color[0]}:${fenTag}${l.path}`, label: lineLabel(l.nodes) }))
@@ -285,10 +285,11 @@ function readPgn(text) {
   const games = parsePgn(text);
   const target = $('#add').dataset.target;
   const old = target ? db.studies[target] : null;
+  const prefix = sharedPrefix(games);
   const chapters = games.map((g, i) => {
-    const name = chapterName(g.tags, i);
+    const name = !g.tags.ChapterName && prefix ? g.tags.Event.slice(prefix.length + 2) : chapterName(g.tags, i);
     const prev = old && old.chapters.find((c) => c.name === name);
-    const color = prev ? prev.color : guessColor(g.root, name + ' ' + (g.tags.StudyName || ''));
+    const color = prev ? prev.color : guessColor(g.root, name + ' ' + (g.tags.StudyName || ''), g.tags);
     return { name, color, off: prev ? prev.off : false, root: g.root, errors: g.errors };
   });
   const total = chapters.reduce((n, c) => n + extractLines(c.root, c.color, +db.settings.depth).length, 0);
@@ -299,7 +300,7 @@ function readPgn(text) {
   }
   const g0 = games[0].tags;
   pending = { pgn: text, chapters };
-  $('#study-name').value = old ? old.name : g0.StudyName || (games.length === 1 ? chapterName(g0, 0) : (g0.Event || '').split(':')[0]) || 'New study';
+  $('#study-name').value = old ? old.name : g0.StudyName || prefix || (games.length === 1 ? chapterName(g0, 0) : (g0.Event || '').split(':')[0]) || 'New study';
   renderPreview();
   $('#preview').hidden = false;
 }
