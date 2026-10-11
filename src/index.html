@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Opening Drills</title>
+<meta name="description" content="Paste a chess study PGN and drill every line with spaced repetition. Works offline.">
+<meta name="theme-color" content="#262421">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Openings">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>/*CG_CSS*/</style>
+<style>
+:root {
+  --bg: #f4f1ec; --panel: #ffffff; --ink: #24211d; --muted: #6f685f; --line: #e3ddd3;
+  --accent: #5b8a3a; --good: #3d7a2a; --good-bg: #e8f3e1; --bad: #b3401f; --bad-bg: #fbe9e3;
+  --info: #2f6690; --info-bg: #e3eef6;
+  --new: #c9c1b4; --learning: #d9a52a; --known: #629924; --due: #c9573a; --empty: #e6e1d8;
+  --btn: #efebe4; --btn-h: #e5dfd5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1a17; --panel: #262421; --ink: #ece7df; --muted: #a39b8f; --line: #3a3631;
+    --accent: #86b35d; --good: #9bd174; --good-bg: #26331d; --bad: #f08b6c; --bad-bg: #3a221b;
+    --info: #8ec1e6; --info-bg: #1d2c38;
+    --new: #575047; --empty: #36322c; --btn: #33302b; --btn-h: #3e3a34;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+[hidden] { display: none !important; }
+header { max-width: 1060px; margin: 0 auto; padding: 14px 16px 6px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; cursor: pointer; }
+header .sub { color: var(--muted); font-size: 13px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.card h3 { margin: 0; font-size: 16px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+button, select, input, textarea { font: inherit; color: inherit; }
+.btn { border: 0; background: var(--btn); padding: 9px 14px; border-radius: 8px; cursor: pointer; min-height: 40px; }
+.btn:hover:not(:disabled) { background: var(--btn-h); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--accent); color: #fff; font-weight: 600; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--accent); }
+.btn.sm { min-height: 32px; padding: 5px 10px; font-size: 13px; }
+.btn.grow { flex: 1; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+.link { background: none; border: 0; color: var(--muted); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 0; }
+select, input[type=text], input[type=password], textarea { padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); min-width: 0; }
+
+/* ---------- home ---------- */
+#home { max-width: 760px; margin: 0 auto; padding: 8px 16px 32px; display: flex; flex-direction: column; gap: 12px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+.stats b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.stats span { font-size: 12px; color: var(--muted); }
+.bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--empty); margin-top: 10px; }
+.bar div { transition: width .3s; }
+.bar .known { background: var(--known); } .bar .learning { background: var(--learning); } .bar .due { background: var(--due); }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.legend i, .dotk { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; flex: none; }
+.k-new { background: var(--new); } .k-learning { background: var(--learning); } .k-known { background: var(--known); } .k-due { background: var(--due); }
+.st-head { display: flex; align-items: center; gap: 8px; }
+.st-head h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.menu { position: relative; }
+.menu-pop { position: absolute; right: 0; top: 100%; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: 4px; min-width: 160px; }
+.menu-pop button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.menu-pop button:hover { background: var(--btn); }
+.menu-pop button.danger { color: var(--bad); }
+details.chapters > summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 12px; }
+.ch { border-top: 1px solid var(--line); padding: 10px 0 2px; margin-top: 10px; }
+.ch-head { display: flex; align-items: center; gap: 8px; }
+.ch-name { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; }
+.ch-name small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.ch.off .ch-name { opacity: .5; }
+.side-pill { border: 1px solid var(--line); border-radius: 99px; padding: 3px 9px 3px 6px; font-size: 12px; cursor: pointer; background: var(--bg); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.side-pill i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #888; display: inline-block; }
+.side-pill.white i { background: #fff; } .side-pill.black i { background: #222; border-color: #999; }
+.lines { margin: 8px 0 0; padding: 0; list-style: none; }
+.lines li { display: flex; gap: 8px; align-items: baseline; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.lines li:hover { background: var(--btn); }
+.lines li .lbl { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.lines li .when { color: var(--muted); font-size: 12px; white-space: nowrap; }
+#add textarea { width: 100%; min-height: 140px; resize: vertical; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 10px; }
+#add .help { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+#preview .ch-head { padding: 6px 0; border-top: 1px solid var(--line); }
+#preview input[type=text] { width: 100%; margin-top: 10px; }
+.err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 14px; }
+.empty { text-align: center; padding: 26px 14px; color: var(--muted); }
+.empty b { color: var(--ink); display: block; font-size: 16px; margin-bottom: 4px; }
+
+/* ---------- drill ---------- */
+#drill { max-width: 1060px; margin: 0 auto; padding: 8px 16px 32px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+@media (max-width: 820px) { #drill { grid-template-columns: minmax(0, 1fr); gap: 14px; } }
+.board-wrap { width: 100%; max-width: 640px; justify-self: center; position: relative; }
+#board { width: 100%; aspect-ratio: 1; border-radius: 4px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+#board .cg-wrap { width: 100%; height: 100%; }
+.side { display: flex; flex-direction: column; gap: 12px; }
+.d-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
+.d-title { font-weight: 600; font-size: 17px; margin: 6px 0 0; color: var(--ink); }
+.pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--btn); color: var(--muted); white-space: nowrap; }
+.pill.new { background: var(--info-bg); color: var(--info); } .pill.review { background: var(--btn); }
+.pill.practice { background: var(--btn); }
+.progress { height: 4px; background: var(--empty); border-radius: 2px; margin-top: 10px; overflow: hidden; }
+.progress div { height: 100%; background: var(--accent); transition: width .3s; }
+.msg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--btn); min-height: 44px; }
+.msg.good { background: var(--good-bg); color: var(--good); }
+.msg.bad { background: var(--bad-bg); color: var(--bad); }
+.msg.info { background: var(--info-bg); color: var(--info); }
+#moves { font-size: 14px; line-height: 1.7; font-variant-numeric: tabular-nums; min-height: 24px; }
+#moves .you { font-weight: 600; }
+#moves .cur { background: var(--accent); color: #fff; border-radius: 4px; padding: 0 4px; }
+#notes { font-size: 14px; }
+#notes p { margin: 0 0 6px; } #notes p:last-child { margin: 0; }
+#notes .at { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 4px; }
+.card-h { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+#promo { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.45); z-index: 10; border-radius: 4px; }
+#promo .box { background: var(--panel); padding: 12px; border-radius: 10px; display: flex; gap: 6px; }
+#promo button { width: 64px; height: 64px; border: 0; border-radius: 8px; background: var(--btn); cursor: pointer; font-size: 40px; line-height: 1; }
+.cg-wrap coords { opacity: 1; font-weight: 600; font-size: clamp(8px, 1.9vw, 12px); line-height: 1; }
+.cg-wrap coords.ranks { left: 0; top: 0; width: 12.5%; height: 100%; }
+.cg-wrap coords.ranks coord { flex: 1 1 0; transform: none; padding: 3px 0 0 3px; text-align: left; }
+.cg-wrap coords.files { left: 0; bottom: 0; width: 100%; height: auto; }
+.cg-wrap coords.files coord { flex: 1 1 0; padding: 0 3px 3px 0; text-align: right; }
+.cg-wrap coords.ranks coord:nth-child(odd), .cg-wrap coords.files coord:nth-child(odd) { color: #f0d9b5; }
+.cg-wrap coords.ranks coord:nth-child(even), .cg-wrap coords.files coord:nth-child(even) { color: #946f51; }
+.cg-wrap.orientation-black coords.ranks coord:nth-child(odd), .cg-wrap.orientation-black coords.files coord:nth-child(odd) { color: #946f51; }
+.cg-wrap.orientation-black coords.ranks coord:nth-child(even), .cg-wrap.orientation-black coords.files coord:nth-child(even) { color: #f0d9b5; }
+
+/* ---------- sync ---------- */
+.sync-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--empty); }
+.dot.ok { background: var(--known); } .dot.syncing { background: var(--learning); } .dot.error { background: var(--due); } .dot.offline { background: var(--muted); }
+.sync-status { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.sync-status.error { color: var(--bad); }
+#sync-setup p, #sync-setup ol { font-size: 13px; color: var(--muted); margin: 8px 0; }
+#sync-setup ol { padding-left: 18px; }
+#sync-setup a { color: var(--accent); }
+#sync-token { flex: 1; }
+footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="home-link">Opening Drills</h1>
+  <span class="sub">Paste a study · drill every line · works offline</span>
+</header>
+
+<div id="home">
+  <section class="card" id="hero"></section>
+  <div id="studies" style="display:flex;flex-direction:column;gap:12px"></div>
+
+  <section class="card" id="add">
+    <h3 id="add-title">Add a study</h3>
+    <p class="help">Paste PGN — a Lichess study (Study → Share &amp; export → <i>Study PGN</i>), a ChessBase export, or any game with variations. Each variation becomes a line to drill.</p>
+    <textarea id="pgn-in" placeholder='[Event "My repertoire: Caro-Kann"]&#10;&#10;1. e4 c6 2. d4 d5 3. e5 (3. Nc3 dxe4 4. Nxe4 Bf5) 3... Bf5 *' spellcheck="false" autocapitalize="off"></textarea>
+    <div class="row">
+      <button class="btn primary" id="pgn-read">Read PGN</button>
+      <label class="btn" style="display:inline-flex;align-items:center">Open .pgn file<input type="file" id="pgn-file" accept=".pgn,.txt,text/plain" hidden></label>
+      <button class="btn" id="add-cancel" hidden>Cancel</button>
+    </div>
+    <div id="pgn-err" class="err" hidden></div>
+    <div id="preview" hidden>
+      <input type="text" id="study-name" placeholder="Study name">
+      <p class="help">Tap a chapter's side to switch which color you play. Untick chapters you don't want to drill.</p>
+      <div id="preview-chs"></div>
+      <div class="row"><button class="btn primary grow" id="study-save">Save study</button></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Settings</h3>
+    <div class="set-row"><label for="set-new">New lines per session</label>
+      <select id="set-new"><option>3</option><option>5</option><option>10</option><option>20</option><option value="1000">All</option></select></div>
+    <div class="set-row"><label for="set-depth">Lines stop after move</label>
+      <select id="set-depth"><option value="0">End of line</option><option>8</option><option>10</option><option>12</option><option>15</option><option>20</option><option>25</option></select></div>
+    <div class="set-row"><span>Back up / move to another device</span>
+      <span><button class="btn sm" id="export">Export</button> <label class="btn sm" style="display:inline-flex;align-items:center">Import<input type="file" id="import" accept=".json,application/json" hidden></label></span></div>
+  </section>
+
+  <section class="card" id="sync">
+    <div class="sync-head"><span id="sync-dot" class="dot"></span>Sync across devices</div>
+    <div id="sync-setup">
+      <p>Keeps studies and progress in step between your Mac and phone using a private GitHub gist.</p>
+      <div class="row" id="sync-reuse" hidden style="margin-top:4px"><button class="btn" id="sync-reuse-btn">Use the token from Mate in Two</button></div>
+      <ol>
+        <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Opening%20Drills" target="_blank" rel="noopener">Create a GitHub token</a> with only the <b>gist</b> box ticked.</li>
+        <li>Paste it below — use the same token on each device.</li>
+      </ol>
+      <div class="row" style="margin-top:4px">
+        <input id="sync-token" type="password" placeholder="ghp_…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="btn" id="sync-connect">Connect</button>
+      </div>
+    </div>
+    <div id="sync-on" hidden>
+      <div id="sync-status" class="sync-status"></div>
+      <div class="row">
+        <button class="btn" id="sync-now">Sync now</button>
+        <button class="btn" id="sync-off">Disconnect</button>
+      </div>
+    </div>
+  </section>
+  <div style="text-align:center"><button class="link" id="reset">Reset all progress</button></div>
+</div>
+
+<main id="drill" hidden>
+  <div class="board-wrap">
+    <div id="board"></div>
+    <div id="promo" hidden><div class="box">
+      <button data-p="q" aria-label="Queen">♕</button><button data-p="r" aria-label="Rook">♖</button>
+      <button data-p="b" aria-label="Bishop">♗</button><button data-p="n" aria-label="Knight">♘</button>
+    </div></div>
+  </div>
+  <div class="side">
+    <section class="card">
+      <div class="d-top"><span id="d-count"></span><span id="d-kind" class="pill"></span></div>
+      <div class="d-title" id="d-title"></div>
+      <div class="small muted" id="d-sub"></div>
+      <div class="progress"><div id="d-progress"></div></div>
+      <div id="msg" class="msg"></div>
+      <div class="row" id="d-play">
+        <button class="btn" id="btn-hint">Hint</button>
+        <button class="btn" id="btn-show">Show move</button>
+        <button class="btn" id="btn-skip">Skip</button>
+      </div>
+      <div class="row" id="d-done" hidden>
+        <button class="btn" id="btn-again">Retry line</button>
+        <button class="btn primary grow" id="btn-next">Next line →</button>
+      </div>
+      <div class="row">
+        <button class="btn grow" id="btn-home">← Library</button>
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-h">Line</div>
+      <div id="moves"></div>
+    </section>
+    <section class="card" id="notes-card" hidden>
+      <div class="card-h">Study notes</div>
+      <div id="notes"></div>
+    </section>
+  </div>
+</main>
+<footer>Everything is stored on this device and works offline. Sync is optional.</footer>
+<script>/*APP_JS*/</script>
+</body>
+</html>
