@@ -888,6 +888,8 @@ function startVsMaia() {
   cur.phase = 'play';
   cur.view = null;
   cur.blunder = null;
+  cur.feedback = null;
+  cur.vsStatus = '';
   syncBoard(false);
   cg.setAutoShapes([]);
   showRow('vs');
@@ -895,33 +897,66 @@ function startVsMaia() {
   renderNotes();
   vsTurn();
 }
+// the message while playing Maia: feedback on your last move, then whose turn it is
+function vsMsg(status) {
+  if (status !== undefined) cur.vsStatus = status;
+  const f = cur.feedback;
+  setMsg((f ? `<div>${f.html}</div>` : '') + (cur.vsStatus ? `<div class="small">${cur.vsStatus}</div>` : ''), f ? f.kind : '');
+}
 function vsTurn() {
   const c = cur.chess;
   if (c.isGameOver()) {
     const why = c.isCheckmate() ? (c.turn() === userTurn() ? 'Checkmate — Maia wins.' : 'Checkmate — you win!') : c.isStalemate() ? 'Stalemate.' : 'Draw.';
-    setMsg(`${why} Take back to try again, or move on.`, c.isCheckmate() && c.turn() !== userTurn() ? 'good' : '');
+    vsMsg(`${why} Take back to try again, or move on.`);
     return syncBoard(false);
   }
   if (c.turn() === userTurn()) {
+    // start Stockfish on your position now, so the verdict on your move comes back fast
+    const fen = c.fen();
+    if (!cur.vsBefore || cur.vsBefore.fen !== fen) cur.vsBefore = { fen, p: analyse(fen) };
     syncBoard(true);
     return;
   }
   syncBoard(false);
-  setMsg('Maia is thinking…', '');
+  vsMsg('Maia is thinking…');
   const g = gen;
   maiaMoves(fens())
     .then((moves) => {
       if (g !== gen || cur.phase !== 'play') return;
       const pick = pickHuman(moves);
       const mv = playMove(pick.uci, { offbook: true });
-      setMsg(`Maia played <b>${mv.san}</b>. Your move.`, '');
+      vsMsg(`Maia played <b>${mv.san}</b>. Your move.`);
       renderMoves();
       vsTurn();
     })
     .catch(() => g === gen && setMsg("Couldn't start Maia on this device.", 'bad'));
 }
+const MARK = { inaccuracy: '?!', mistake: '?', blunder: '??' };
 function playVsMaia(u) {
-  playMove(u, { offbook: true });
+  const fenBefore = cur.chess.fen();
+  const before = cur.vsBefore && cur.vsBefore.fen === fenBefore ? cur.vsBefore.p : analyse(fenBefore);
+  const mv = playMove(u, { offbook: true });
+  const entry = cur.played[cur.played.length - 1];
+  cur.feedback = { html: `<b>${mv.san}</b> — checking…`, kind: '' };
+  judge(before, cur.chess.fen())
+    .then((v) => {
+      if (!cur || !cur.played.includes(entry)) return; // taken back meanwhile
+      const best = v.best && v.best !== u ? new Chess(fenBefore).move({ from: v.best.slice(0, 2), to: v.best.slice(2, 4), promotion: v.best[4] }).san : null;
+      const label = v.best === u ? 'best' : v.label;
+      const text = { best: 'best move', good: 'good move', inaccuracy: 'inaccuracy', mistake: 'mistake', blunder: 'blunder' }[label];
+      const icon = { best: '✓', good: '✓', inaccuracy: '?!', mistake: '?', blunder: '??' }[label];
+      entry.mark = MARK[label];
+      entry.markKind = label;
+      cur.feedback = {
+        html: `${icon} <b>${mv.san}</b> — ${text} (${scoreText(v.after, true)})${best && label !== 'good' ? `. Better was <b>${best}</b>.` : '.'}`,
+        kind: { best: 'good', good: 'good', inaccuracy: 'info', mistake: 'bad', blunder: 'bad' }[label],
+      };
+      if (cur.phase === 'play') vsMsg();
+      renderMoves();
+    })
+    .catch(() => {
+      if (cur && cur.played.includes(entry)) cur.feedback = null;
+    });
   cg.setAutoShapes([]);
   renderMoves();
   vsTurn();
@@ -939,8 +974,9 @@ function takeBack() {
   const last = cur.played[cur.played.length - 1];
   cg.set({ lastMove: last ? sq(last.uci) : undefined });
   cg.setAutoShapes([]);
+  cur.feedback = null;
   renderMoves();
-  setMsg('Taken back. Your move.', '');
+  vsMsg('Taken back. Your move.');
   vsTurn();
 }
 async function evaluateNow() {
@@ -967,7 +1003,7 @@ function renderMoves() {
   const parts = played.map((p, k) => {
     const num = moveNo(k, false);
     const cls = [p.you ? 'you' : '', p.offbook ? 'off' : '', replay && cur.view === k + 1 ? 'on' : ''].filter(Boolean).join(' ');
-    const ann = p.node && p.node.ann ? esc(p.node.ann) : '';
+    const ann = p.node && p.node.ann ? esc(p.node.ann) : p.mark ? `<span class="mk ${p.markKind}">${p.mark}</span>` : '';
     return `<button class="mv ${cls}" data-k="${k + 1}" ${replay ? '' : 'tabindex="-1"'}>${num}${esc(p.san)}${ann}</button>`;
   });
   if (cur.phase === 'line' && cur.pos < nodes().length && isUserMove(cur.pos)) parts.push('<span class="cur">?</span>');
