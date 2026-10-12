@@ -775,7 +775,7 @@ async function answerSurprise(u) {
   if (verdict.label === 'blunder') {
     cur.mistakes++;
     cur.blunder = { fenBefore };
-    setMsg(`✗ <b>${mv.san}</b> is a blunder (${scoreText(verdict.after, true)} after it).${bestNote}`, 'bad');
+    setMsg(`✗ <b>${mv.san}</b> is a blunder (${scoreText(verdict.after, cur.chess.fen())} after it).${bestNote}`, 'bad');
     return finishLine(true);
   }
   const how = isBest ? 'the best move' : { good: 'a good move', inaccuracy: 'OK — a slight inaccuracy', mistake: 'not a blunder, but a mistake' }[verdict.label];
@@ -937,8 +937,9 @@ function playVsMaia(u) {
   const before = cur.vsBefore && cur.vsBefore.fen === fenBefore ? cur.vsBefore.p : analyse(fenBefore);
   const mv = playMove(u, { offbook: true });
   const entry = cur.played[cur.played.length - 1];
+  const fenAfter = cur.chess.fen();
   cur.feedback = { html: `<b>${mv.san}</b> — checking…`, kind: '' };
-  judge(before, cur.chess.fen())
+  judge(before, fenAfter)
     .then((v) => {
       if (!cur || !cur.played.includes(entry)) return; // taken back meanwhile
       const best = v.best && v.best !== u ? new Chess(fenBefore).move({ from: v.best.slice(0, 2), to: v.best.slice(2, 4), promotion: v.best[4] }).san : null;
@@ -948,7 +949,7 @@ function playVsMaia(u) {
       entry.mark = MARK[label];
       entry.markKind = label;
       cur.feedback = {
-        html: `${icon} <b>${mv.san}</b> — ${text} (${scoreText(v.after, true)})${best && label !== 'good' ? `. Better was <b>${best}</b>.` : '.'}`,
+        html: `${icon} <b>${mv.san}</b> — ${text} (${scoreText(v.after, fenAfter)})${best && label !== 'good' ? `. Better was <b>${best}</b>.` : '.'}`,
         kind: { best: 'good', good: 'good', inaccuracy: 'info', mistake: 'bad', blunder: 'bad' }[label],
       };
       if (cur.phase === 'play') vsMsg();
@@ -986,10 +987,8 @@ async function evaluateNow() {
   try {
     const s = await analyse(fen, 1500);
     if (!cur || cur.chess.fen() !== fen) return;
-    // show the score from your side
-    const yours = cur.chess.turn() === userTurn() ? s : s.mate !== undefined ? { mate: -s.mate } : { cp: -s.cp };
     const best = s.best ? new Chess(fen).move({ from: s.best.slice(0, 2), to: s.best.slice(2, 4), promotion: s.best[4] }).san : null;
-    setMsg(`Stockfish: <b>${scoreText(yours)}</b> for you${best ? ` · best here is <b>${best}</b>` : ''}.`, '');
+    setMsg(`Stockfish: <b>${scoreText(s, fen)}</b>${best ? ` · best here is <b>${best}</b>` : ''}.`, '');
     if (s.best) cg.setAutoShapes([{ orig: sq(s.best)[0], dest: sq(s.best)[1], brush: 'green' }]);
   } catch {
     setMsg("Couldn't run Stockfish on this device.", 'bad');

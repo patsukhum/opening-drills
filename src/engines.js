@@ -96,8 +96,11 @@ export async function judge(before, fenAfter) {
   return { loss, label, best: b.best, after: a };
 }
 
-export function scoreText(s, flip = false) {
-  if (s.mate !== undefined) return s.mate === 0 ? 'mate' : `mate in ${Math.abs(s.mate)}${(s.mate > 0) !== flip ? '' : ' (against)'}`;
-  const v = (flip ? -s.cp : s.cp) / 100;
+// Standard eval notation from White's side: +1.2 = White better, -0.8 = Black better, #3 / #-3 = mate.
+// `fen` is the position Stockfish scored (its score is for the side to move there).
+export function scoreText(s, fen) {
+  const sign = fen.split(' ')[1] === 'w' ? 1 : -1;
+  if (s.mate !== undefined) return s.mate === 0 ? 'checkmate' : `#${sign * s.mate}`;
+  const v = (sign * s.cp) / 100;
   return (v > 0 ? '+' : '') + v.toFixed(1);
 }
