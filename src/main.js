@@ -1046,21 +1046,33 @@ async function evaluateNow() {
 }
 
 // ---------- moves, replay, notes ----------
+// move list as numbered rows (1. d4 | Nf6), scrolling inside its own box
 function renderMoves() {
   const played = cur.played;
   const replay = cur.phase === 'done' && cur.view !== null;
-  const parts = played.map((p, k) => {
-    const num = moveNo(k, false);
+  const cells = played.map((p, k) => {
     const cls = [p.you ? 'you' : '', p.offbook ? 'off' : '', replay && cur.view === k + 1 ? 'on' : ''].filter(Boolean).join(' ');
     const ann = p.node && p.node.ann ? esc(p.node.ann) : p.mark ? `<span class="mk ${p.markKind}">${p.mark}</span>` : '';
-    return `<button class="mv ${cls}" data-k="${k + 1}" ${replay ? '' : 'tabindex="-1"'}>${num}${esc(p.san)}${ann}</button>`;
+    return `<button class="mv ${cls}" data-k="${k + 1}" ${replay ? '' : 'tabindex="-1"'}>${esc(p.san)}${ann}</button>`;
   });
-  if (cur.phase === 'line' && cur.pos < nodes().length && isUserMove(cur.pos)) parts.push('<span class="cur">?</span>');
-  if (cur.phase === 'offbook') parts.push('<span class="cur">?</span>');
-  const intro = cur.root.fen !== START ? '<span class="muted">(from position) </span>' : '';
-  $('#moves').innerHTML = intro + (parts.join(' ') || '<span class="muted">…</span>');
-  $('#moves').classList.toggle('replay', replay);
+  if ((cur.phase === 'line' && cur.pos < nodes().length && isUserMove(cur.pos)) || cur.phase === 'offbook') cells.push('<span class="mv cur">?</span>');
+  const [, turn, , , , full] = cur.root.fen.split(' ');
+  if (turn === 'b') cells.unshift('<span class="mv empty">…</span>');
+  let html = cur.root.fen !== START ? '<div class="from">from position</div>' : '';
+  for (let i = 0; i < cells.length; i += 2) {
+    html += `<span class="no">${(+full || 1) + i / 2}.</span>${cells[i]}${cells[i + 1] || '<span></span>'}`;
+  }
+  const box = $('#moves');
+  box.innerHTML = html || '<span class="muted">…</span>';
+  box.classList.toggle('replay', replay);
   $('#replay').hidden = !replay;
+  // keep the current move (or the newest) in view without scrolling the page
+  const target = box.querySelector('.mv.on') || box.querySelector('.mv.cur') || box.lastElementChild;
+  if (target) {
+    const top = target.offsetTop; // #moves is position: relative, so this is already box-relative
+    if (top < box.scrollTop) box.scrollTop = top - 4;
+    else if (top + target.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + target.offsetHeight - box.clientHeight + 4;
+  }
 }
 
 // replay: view = how many plies are on the board
@@ -1108,6 +1120,10 @@ function noteHtml(label, text, { cls = '', you = false, kicker = '' } = {}) {
 }
 
 function renderNotes() {
+  if (cur.phase === 'play') {
+    $('#notes-card').hidden = true;
+    return;
+  }
   const out = [];
   if (cur.phase === 'done' && cur.view !== null) {
     // replay: the note for the move on the board
