@@ -980,6 +980,54 @@ function takeBack() {
   vsMsg('Taken back. Your move.');
   vsTurn();
 }
+// the game so far as PGN: the study line, then the Maia game with your move marks
+function gamePgn() {
+  const c = cur.chess;
+  const result = c.isCheckmate() ? (c.turn() === 'w' ? '0-1' : '1-0') : c.isDraw() || c.isStalemate() ? '1/2-1/2' : '*';
+  const you = userColor() === 'white';
+  const d = new Date();
+  const tags = {
+    Event: `Opening Drills: ${cur.ref.s.name} – ${cur.ref.ch.name}`,
+    Site: location.origin + location.pathname,
+    Date: `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`,
+    White: you ? 'You' : 'Maia 1900',
+    Black: you ? 'Maia 1900' : 'You',
+    Result: result,
+  };
+  if (cur.root.fen !== START) Object.assign(tags, { SetUp: '1', FEN: cur.root.fen });
+  const head = Object.entries(tags).map(([k, v]) => `[${k} "${String(v).replace(/"/g, "'")}"]`).join('\n');
+  const parts = [];
+  cur.played.forEach((p, k) => {
+    if (k === (cur.vsStart ?? -1)) parts.push('{ Maia 1900 takes over }');
+    const num = moveNo(k, k === cur.vsStart).replace('…', '...'); // PGN wants ASCII dots
+    parts.push((num ? num + ' ' : '') + p.san + (p.mark || ''));
+  });
+  parts.push(result);
+  return `${head}\n\n${parts.join(' ').replace(/(.{1,79})(\s|$)/g, '$1\n').trim()}\n`;
+}
+async function copyPgn() {
+  const text = gamePgn();
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    // older browsers / no clipboard permission: copy through a hidden textarea
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;opacity:0;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      ok = document.execCommand('copy');
+    } catch {}
+    ta.remove();
+  }
+  const b = $('#btn-pgn');
+  b.textContent = ok ? 'Copied ✓' : 'Copy failed';
+  setTimeout(() => (b.textContent = 'Copy PGN'), 1600);
+}
 async function evaluateNow() {
   if (!cur) return;
   const fen = cur.chess.fen();
@@ -1119,6 +1167,7 @@ $('#btn-vs').onclick = () => {
 };
 $('#btn-takeback').onclick = takeBack;
 $('#btn-eval').onclick = evaluateNow;
+$('#btn-pgn').onclick = copyPgn;
 $('#btn-stopvs').onclick = () => {
   if (!cur) return;
   gen++;
@@ -1213,4 +1262,4 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 // test hook for local development only
-if (location.hostname === 'localhost') window.__drill = { expected: () => (cur && cur.phase === 'line' && cur.ref.line.nodes[cur.pos] && isUserMove(cur.pos) ? cur.ref.line.nodes[cur.pos].uci : null), cur: () => cur, db: () => db };
+if (location.hostname === 'localhost') window.__drill = { expected: () => (cur && cur.phase === 'line' && cur.ref.line.nodes[cur.pos] && isUserMove(cur.pos) ? cur.ref.line.nodes[cur.pos].uci : null), cur: () => cur, db: () => db, pgn: () => gamePgn() };
