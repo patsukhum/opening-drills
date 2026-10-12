@@ -118,8 +118,16 @@ details.chapters > summary { cursor: pointer; font-size: 13px; color: var(--mute
 .msg.bad { background: var(--bad-bg); color: var(--bad); }
 .msg.info { background: var(--info-bg); color: var(--info); }
 #moves { font-size: 14px; line-height: 1.7; font-variant-numeric: tabular-nums; min-height: 24px; }
-#moves .you { font-weight: 600; }
+#moves .mv { border: 0; background: none; padding: 1px 3px; margin: 0; border-radius: 4px; font: inherit; color: inherit; cursor: default; }
+#moves.replay .mv { cursor: pointer; }
+#moves.replay .mv:hover { background: var(--btn); }
+#moves .mv.you { font-weight: 600; }
+#moves .mv.off { color: var(--info); font-style: italic; }
+#moves .mv.on { background: var(--accent); color: #fff; }
 #moves .cur { background: var(--accent); color: #fff; border-radius: 4px; padding: 0 4px; }
+.replay { display: flex; gap: 6px; margin-top: 10px; }
+.replay .btn { flex: 1; }
+#notes a { color: var(--accent); font-weight: 600; text-decoration: none; }
 #notes { font-size: 14px; }
 #notes p { margin: 0 0 6px; } #notes p:last-child { margin: 0; }
 #notes .at { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 4px; }
@@ -182,6 +190,8 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
     <h3>Settings</h3>
     <div class="set-row"><label for="set-new">New lines per session</label>
       <select id="set-new"><option>3</option><option>5</option><option>10</option><option>20</option><option value="1000">All</option></select></div>
+    <div class="set-row"><label for="set-surprise">Surprise moves in random mode</label>
+      <select id="set-surprise"><option value="0">Off</option><option value="0.1">10% of lines</option><option value="0.25">25% of lines</option><option value="0.5">50% of lines</option></select></div>
     <div class="set-row"><label for="set-depth">Lines stop after move</label>
       <select id="set-depth"><option value="0">End of line</option><option>8</option><option>10</option><option>12</option><option>15</option><option>20</option><option>25</option></select></div>
     <div class="set-row"><span>Back up / move to another device</span>
@@ -233,9 +243,17 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
         <button class="btn" id="btn-show">Show move</button>
         <button class="btn" id="btn-skip">Skip</button>
       </div>
-      <div class="row" id="d-done" hidden>
-        <button class="btn" id="btn-again">Retry line</button>
-        <button class="btn primary grow" id="btn-next">Next line →</button>
+      <div id="d-done" hidden>
+        <div class="row">
+          <button class="btn" id="btn-again">Retry line</button>
+          <button class="btn primary grow" id="btn-next">Next line →</button>
+        </div>
+        <div class="row"><button class="btn grow" id="btn-vs">♟ Play on vs Maia 1900</button></div>
+      </div>
+      <div class="row" id="d-vs" hidden>
+        <button class="btn" id="btn-takeback">Take back</button>
+        <button class="btn" id="btn-eval">Evaluate</button>
+        <button class="btn grow" id="btn-stopvs">Stop</button>
       </div>
       <div class="row">
         <button class="btn grow" id="btn-home">← Library</button>
@@ -244,6 +262,12 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
     <section class="card">
       <div class="card-h">Line</div>
       <div id="moves"></div>
+      <div class="replay" id="replay" hidden>
+        <button class="btn sm" data-step="start" aria-label="Start">⏮</button>
+        <button class="btn sm" data-step="-1" aria-label="Back">◀</button>
+        <button class="btn sm" data-step="1" aria-label="Forward">▶</button>
+        <button class="btn sm" data-step="end" aria-label="End">⏭</button>
+      </div>
     </section>
     <section class="card" id="notes-card" hidden>
       <div class="card-h">Study notes</div>

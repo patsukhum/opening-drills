@@ -2,6 +2,7 @@ import { Chess } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
 import { parsePgn, chapterName, sharedPrefix, guessColor, extractLines, lineLabel, START } from './pgn.js';
 import { createSync, POLGAR_SYNC_KEY } from './sync.js';
+import { maiaMoves, pickHuman, analyse, judge, scoreText } from './engines.js';
 
 const STORE_KEY = 'opening-drills-v1';
 const $ = (s) => document.querySelector(s);
@@ -17,7 +18,7 @@ const ARROW_DELAY = 2000; // ms before a new line's arrow appears
 // ---------- persistence ----------
 // studies: id -> { name, pgn, chapters: [{ name, color, off }], t, del? }
 // entries: lineKey -> { b: box, d: due ms, t: ms }
-let db = { studies: {}, entries: {}, resetAt: 0, settings: { newPer: 5, depth: 0 } };
+let db = { studies: {}, entries: {}, resetAt: 0, settings: { newPer: 5, depth: 0, surprise: 0.1 } };
 try {
   const s = JSON.parse(localStorage.getItem(STORE_KEY));
   if (s) db = { ...db, ...s, settings: { ...db.settings, ...(s.settings || {}) } };
@@ -53,7 +54,7 @@ function studyView(id) {
     const lines = extractLines(g.root, color, +db.settings.depth)
       .map((l) => ({ ...l, key: `${id}:${color[0]}:${fenTag}${l.path}`, label: lineLabel(l.nodes) }))
       .filter((l) => !seen.has(l.key) && seen.add(l.key));
-    return { idx: i, name: cfg.name || chapterName(g.tags, i), color, off: !!cfg.off, root: g.root, lines };
+    return { idx: i, name: cfg.name || chapterName(g.tags, i), color, off: !!cfg.off, root: g.root, lines, video: YT(g.tags.Site) || YT(g.tags.Annotator) };
   });
   const view = { id, name: st.name, chapters };
   parsed.set(id, { sig, view });
@@ -122,11 +123,13 @@ function renderHome() {
       <div class="row">
         <button class="btn primary grow" data-go="due" ${t.due ? '' : 'disabled'}>${t.due ? `Review ${t.due} due` : t.next < Infinity ? `Next review in ${until(t.next)}` : 'Nothing to review'}</button>
         <button class="btn grow" data-go="new" ${newCount ? '' : 'disabled'}>${newCount ? `Learn ${newCount} new` : 'No new lines'}</button>
-      </div>`;
+      </div>
+      <div class="row"><button class="btn grow" data-go="random" ${t.total ? '' : 'disabled'}>🎲 Random lines${+db.settings.surprise ? ` · ${Math.round(db.settings.surprise * 100)}% surprises` : ''}</button></div>`;
   }
   $('#studies').innerHTML = studies.map(studyHtml).join('');
   $('#set-new').value = String(db.settings.newPer);
   $('#set-depth').value = String(db.settings.depth);
+  $('#set-surprise').value = String(db.settings.surprise);
 }
 
 function barHtml(t) {
@@ -145,6 +148,7 @@ function studyHtml(s) {
         ${openMenu === s.id ? `<div class="menu-pop">
           <button data-act="rename">Rename</button>
           <button data-act="replace">Replace PGN…</button>
+          <button data-act="random">Random lines</button>
           <button data-act="practice">Practice all lines</button>
           <button data-act="delete" class="danger">Delete study</button></div>` : ''}
       </div></div>
@@ -182,7 +186,7 @@ function chapterHtml(s, ch) {
 
 $('#hero').onclick = (e) => {
   const b = e.target.closest('[data-go]');
-  if (b) startSession({ kind: b.dataset.go, title: b.dataset.go === 'due' ? 'Review' : 'Learn new lines' });
+  if (b) startSession({ kind: b.dataset.go, title: { due: 'Review', new: 'Learn new lines', random: 'Random lines' }[b.dataset.go] });
 };
 
 $('#studies').addEventListener('toggle', (e) => {
@@ -214,6 +218,7 @@ $('#studies').onclick = (e) => {
   openMenu = null;
   if (act === 'drill') startSession({ kind: 'both', study: id, title: st.name });
   else if (act === 'practice') startSession({ kind: 'practice', study: id, title: st.name });
+  else if (act === 'random') startSession({ kind: 'random', study: id, title: st.name });
   else if (act === 'drill-ch') {
     const ch = studyView(id).chapters[ci];
     const t = tally(refsFor({ study: id, chapter: ci }));
@@ -374,6 +379,11 @@ $('#set-new').onchange = (e) => {
   persist();
   renderHome();
 };
+$('#set-surprise').onchange = (e) => {
+  db.settings.surprise = +e.target.value;
+  persist();
+  renderHome();
+};
 $('#set-depth').onchange = (e) => {
   db.settings.depth = +e.target.value;
   persist();
@@ -439,17 +449,23 @@ function shuffle(a) {
   return a;
 }
 
-function startSession(opts) {
-  const now = Date.now();
+function batchFor(opts, now = Date.now()) {
   const refs = refsFor(opts);
-  let queue;
-  if (opts.kind === 'line') queue = refs;
-  else if (opts.kind === 'practice') queue = shuffle(refs.slice());
-  else {
-    const due = refs.filter((r) => lineState(r.line.key, now) === 'due').sort((a, b) => db.entries[a.line.key].d - db.entries[b.line.key].d);
-    const fresh = refs.filter((r) => lineState(r.line.key, now) === 'new').slice(0, +db.settings.newPer);
-    queue = opts.kind === 'due' ? due : opts.kind === 'new' ? fresh : due.concat(fresh);
+  if (opts.kind === 'line') return refs;
+  if (opts.kind === 'practice') return shuffle(refs.slice());
+  const due = refs.filter((r) => lineState(r.line.key, now) === 'due').sort((a, b) => db.entries[a.line.key].d - db.entries[b.line.key].d);
+  const fresh = opts.kind === 'due' ? [] : refs.filter((r) => lineState(r.line.key, now) === 'new').slice(0, +db.settings.newPer);
+  return opts.kind === 'new' ? fresh : due.concat(fresh);
+}
+
+function startSession(opts) {
+  if (opts.kind === 'random') {
+    if (!refsFor(opts).length) return;
+    session = { ...opts, queue: [], i: -1, done: [] };
+    showDrill();
+    return nextLine();
   }
+  const queue = batchFor(opts);
   if (!queue.length) return;
   session = { ...opts, queue: queue.map((r) => ({ ...r, practice: opts.kind === 'practice' })), i: 0, done: [] };
   showDrill();
@@ -482,41 +498,83 @@ function showHome() {
   window.scrollTo(0, 0);
 }
 
-const userTurn = () => (cur.ref.ch.color === 'white' ? 'w' : 'b');
+const userColor = () => cur.ref.ch.color;
+const userTurn = () => (userColor() === 'white' ? 'w' : 'b');
 const isUserMove = (pos) => cur.ref.line.nodes[pos].parent.fen.split(' ')[1] === userTurn();
+const nodes = () => cur.ref.line.nodes;
+const fens = () => [cur.root.fen, ...cur.played.map((p) => p.fen)];
 
+// a random line in scope; in random mode the opponent's choices come from this pick
+function randomRef() {
+  const refs = refsFor(session);
+  return { ...refs[Math.floor(Math.random() * refs.length)], random: true };
+}
+
+// phases: 'line' (following the study) · 'offbook' (answer Maia's surprise) · 'judging' · 'done' · 'play' (vs Maia)
 function loadLine(again = false) {
   gen++;
   const ref = session.queue[session.i];
   const e = db.entries[ref.line.key];
+  const root = ref.line.nodes[0].parent;
   cur = {
     ref,
-    chess: new Chess(ref.line.nodes[0].parent.fen),
+    root,
+    chess: new Chess(root.fen),
+    played: [], // { san, uci, fen, node?, you, offbook? }
     pos: 0,
+    phase: 'line',
     mistakes: 0,
     tries: 0,
-    learn: !e && !ref.practice && !ref.retry && !again,
-    finished: false,
+    learn: !e && !ref.practice && !ref.retry && !ref.random && !again,
+    again,
     shown: false,
+    view: null,
   };
+  if (ref.random && Math.random() < +db.settings.surprise) {
+    // pick one of the opponent's moves (not the very first if possible) for Maia to replace
+    const opp = ref.line.nodes.map((_, k) => k).filter((k) => !isUserMove(k));
+    const later2 = opp.filter((k) => k >= 2);
+    const pool = later2.length ? later2 : opp;
+    if (pool.length) cur.surpriseAt = pool[Math.floor(Math.random() * pool.length)];
+  }
   cg.set({ orientation: ref.ch.color, lastMove: undefined });
   cg.setShapes([]);
   cg.setAutoShapes([]);
   syncBoard(false);
   $('#d-title').textContent = ref.ch.name;
   $('#d-sub').textContent = ref.s.name + ' · you play ' + ref.ch.color;
-  const kind = ref.practice || again ? ['practice', 'Practice'] : ref.retry ? ['practice', 'Second try'] : cur.learn ? ['new', 'New line'] : ['review', 'Review'];
+  const kind = ref.random ? ['practice', 'Random line'] : ref.practice || again ? ['practice', 'Practice'] : ref.retry ? ['practice', 'Second try'] : cur.learn ? ['new', 'New line'] : ['review', 'Review'];
   $('#d-kind').textContent = kind[1];
   $('#d-kind').className = 'pill ' + kind[0];
-  $('#d-count').textContent = session.queue.length > 1 ? `Line ${session.i + 1} of ${session.queue.length}` : '';
-  $('#d-progress').style.width = (session.i / session.queue.length) * 100 + '%';
-  $('#d-play').hidden = false;
-  $('#d-done').hidden = true;
+  renderCount();
+  showRow('play');
   $('#btn-hint').disabled = $('#btn-show').disabled = false;
-  setMsg(cur.learn ? "New line — think first, then an arrow shows the move." : `Play your moves as ${ref.ch.color}.`, cur.learn ? 'info' : '');
+  setMsg(
+    ref.random ? `Random line — your opponent may surprise you. Play as ${ref.ch.color}.` : cur.learn ? 'New line — think first, then an arrow shows the move.' : `Play your moves as ${ref.ch.color}.`,
+    cur.learn ? 'info' : '',
+  );
   renderMoves();
   renderNotes();
   later(advance, 350);
+}
+
+function renderCount() {
+  if (session.kind === 'random') {
+    const ok = session.done.filter((d) => d.ok).length;
+    $('#d-count').textContent = `Round ${session.i + 1}${session.done.length ? ` · ${ok}/${session.done.length} passed` : ''}`;
+    $('#d-progress').parentElement.hidden = true;
+    return;
+  }
+  $('#d-progress').parentElement.hidden = false;
+  $('#d-count').textContent = session.queue.length > 1 ? `Line ${session.i + 1} of ${session.queue.length}` : '';
+  const doneHere = cur && cur.phase !== 'line' && cur.phase !== 'offbook' ? 1 : 0;
+  $('#d-progress').style.width = ((session.i + doneHere) / session.queue.length) * 100 + '%';
+}
+
+function showRow(which) {
+  $('#d-play').hidden = which !== 'play';
+  $('#d-done').hidden = which !== 'done';
+  $('#d-vs').hidden = which !== 'vs';
 }
 
 function syncBoard(userCanMove) {
@@ -525,7 +583,7 @@ function syncBoard(userCanMove) {
     fen: cur.chess.fen(),
     turnColor: turn,
     check: cur.chess.inCheck() ? turn : false,
-    movable: { color: userCanMove ? cur.ref.ch.color : undefined, dests: userCanMove ? dests(cur.chess) : new Map() },
+    movable: { color: userCanMove ? userColor() : undefined, dests: userCanMove ? dests(cur.chess) : new Map() },
   });
 }
 function dests(chess) {
@@ -538,52 +596,90 @@ function dests(chess) {
 }
 const sq = (u) => [u.slice(0, 2), u.slice(2, 4)];
 
+function playMove(uci, extra = {}) {
+  const mv = cur.chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+  cur.played.push({ san: mv.san, uci, fen: cur.chess.fen(), you: mv.color === userTurn(), ...extra });
+  cg.set({ lastMove: [mv.from, mv.to] });
+  return mv;
+}
+
 // play opponent moves until it's your turn or the line ends
 function advance() {
-  const nodes = cur.ref.line.nodes;
-  if (cur.pos >= nodes.length) return finishLine();
+  if (cur.phase !== 'line') return;
+  const line = nodes();
+  if (cur.pos >= line.length) return finishLine();
   if (!isUserMove(cur.pos)) {
-    const n = nodes[cur.pos];
-    const [from, to] = sq(n.uci);
-    cur.chess.move({ from, to, promotion: n.uci[4] });
+    if (cur.surpriseAt === cur.pos) return surprise();
+    playMove(line[cur.pos].uci, { node: line[cur.pos] });
     cur.pos++;
-    cg.set({ lastMove: [from, to] });
     syncBoard(false);
     renderMoves();
     renderNotes();
-    return later(advance, cur.pos >= nodes.length ? 200 : 420);
+    return later(advance, cur.pos >= line.length ? 200 : 420);
   }
   cur.tries = 0;
   cur.shown = false;
   syncBoard(true);
-  const shapes = studyShapes();
   if (cur.learn) {
     // give a moment to think before the answer shows
     const pos = cur.pos;
     setMsg('Your move — have a think. The arrow shows in 2 seconds.', 'info');
     later(() => {
-      if (cur.pos !== pos || cur.finished || cur.shown) return;
-      cg.setAutoShapes([...studyShapes(), { orig: sq(nodes[pos].uci)[0], dest: sq(nodes[pos].uci)[1], brush: 'blue' }]);
-      setMsg(`Play <b>${moveText(pos)}</b> (the blue arrow).`, 'info');
+      if (cur.pos !== pos || cur.phase !== 'line' || cur.shown) return;
+      cg.setAutoShapes([...studyShapes(pos), { orig: sq(line[pos].uci)[0], dest: sq(line[pos].uci)[1], brush: 'blue' }]);
+      setMsg(`Play <b>${moveText(line[pos])}</b> (the blue arrow).`, 'info');
     }, ARROW_DELAY);
-  } else if (cur.pos > 0 && !cur.finished) {
-    setMsg(`Your move${nodes[cur.pos - 1] ? ` — after <b>${moveText(cur.pos - 1)}</b>` : ''}.`, '');
+  } else if (cur.pos > 0) {
+    setMsg(`Your move — after <b>${moveText(line[cur.pos - 1])}</b>.`, '');
   }
-  cg.setAutoShapes(shapes);
+  cg.setAutoShapes(cur.learn ? studyShapes(cur.pos) : []);
 }
 
-// arrows the study drew for the move just played — only while learning, so reviews stay blind
-function studyShapes() {
-  if (!cur.learn && !cur.finished) return [];
-  const n = cur.pos > 0 ? cur.ref.line.nodes[cur.pos - 1] : cur.ref.line.nodes[0].parent;
+// Maia plays a move the study doesn't cover; any reply that isn't a blunder passes
+async function surprise() {
+  const g = gen;
+  cur.surpriseAt = null;
+  setMsg('…', '');
+  let moves;
+  try {
+    moves = await maiaMoves(fens());
+  } catch {
+    moves = null;
+  }
+  if (g !== gen) return;
+  const book = new Set(nodes()[cur.pos].parent.children.map((c) => c.uci));
+  const off = (moves || []).filter((m) => !book.has(m.uci) && m.p >= 0.03);
+  if (!off.length) return advance(); // nothing human-like off the book — carry on as normal
+  const pick = pickHuman(off, 0);
+  const mv = playMove(pick.uci, { offbook: true });
+  cur.phase = 'offbook';
+  cur.surprised = true;
+  cur.before = analyse(cur.chess.fen());
+  syncBoard(true);
+  renderMoves();
+  renderNotes();
+  setMsg(`<b>Surprise!</b> Maia left the study with <b>${mv.san}</b> (${Math.round(pick.p * 100)}% of 1900s play it). Find a good reply — anything but a blunder passes.`, 'info');
+  cg.setAutoShapes([]);
+}
+
+// arrows the study drew for the move before `pos`
+function studyShapes(pos) {
+  const n = pos > 0 ? nodes()[pos - 1] : cur.root;
   return (n.shapes || []).map((s) => ({ ...s }));
 }
 
-function moveText(pos) {
-  const n = cur.ref.line.nodes[pos];
+function moveText(n) {
   const ply = n.ply - 1;
   return `${Math.floor(ply / 2) + 1}${ply % 2 ? '…' : '.'}${n.san}`;
 }
+// move number prefix for cur.played[k]; black moves get "12…" only when `always` or first
+function moveNo(k, always = true) {
+  const [, turn, , , , full] = cur.root.fen.split(' ');
+  const ply = k + (turn === 'b' ? 1 : 0);
+  const n = (+full || 1) + Math.floor(ply / 2);
+  return ply % 2 === 0 ? `${n}.` : always || k === 0 ? `${n}…` : '';
+}
+const plyText = (k) => moveNo(k) + cur.played[k].san;
 
 function needsPromotion(from, to) {
   return cur.chess.moves({ verbose: true }).some((m) => m.from === from && m.to === to && m.promotion);
@@ -604,22 +700,29 @@ function askPromotion() {
 }
 
 async function onUserMove(from, to) {
-  if (!cur || cur.finished) return;
+  if (!cur || !['line', 'offbook', 'play'].includes(cur.phase)) return;
   const g = gen;
   let promotion;
   if (needsPromotion(from, to)) promotion = await askPromotion();
   if (g !== gen) return;
-  let mv;
-  try {
-    mv = cur.chess.move({ from, to, promotion });
-  } catch {
-    return syncBoard(true);
+  const u = from + to + (promotion || '');
+  if (cur.phase === 'offbook') return answerSurprise(u);
+  if (cur.phase === 'play') return playVsMaia(u);
+
+  const node = nodes()[cur.pos];
+  let target = node.uci === u ? node : null;
+  // random mode: any of your repertoire moves is fine — follow a line through it
+  if (!target && cur.ref.random) {
+    const alt = node.parent.children.find((c) => c.uci === u);
+    const lines = alt && cur.ref.ch.lines.filter((l) => l.nodes[cur.pos] === alt);
+    if (lines && lines.length) {
+      cur.ref = { ...cur.ref, line: lines[Math.floor(Math.random() * lines.length)] };
+      target = alt;
+    }
   }
-  const u = mv.from + mv.to + (mv.promotion || '');
-  const node = cur.ref.line.nodes[cur.pos];
-  if (u === node.uci) {
+  if (target) {
+    const mv = playMove(u, { node: target });
     cur.pos++;
-    cg.set({ lastMove: [from, to] });
     syncBoard(false);
     renderMoves();
     renderNotes();
@@ -627,40 +730,77 @@ async function onUserMove(from, to) {
     cg.setAutoShapes([]);
     return later(advance, 260);
   }
-  cur.chess.undo();
-  const sibling = node.parent.children.some((c) => c.uci === u);
-  if (sibling) {
-    setMsg(`<b>${mv.san}</b> is also in your repertoire — but this line goes another way. Try again.`, 'info');
+  let san = u;
+  try {
+    san = new Chess(cur.chess.fen()).move({ from, to, promotion }).san;
+  } catch {}
+  if (node.parent.children.some((c) => c.uci === u)) {
+    setMsg(`<b>${san}</b> is also in your repertoire — but this line goes another way. Try again.`, 'info');
   } else {
     cur.mistakes++;
     cur.tries++;
-    setMsg(`✗ <b>${mv.san}</b> isn't the move here.${cur.tries >= 2 ? ' The arrow shows it.' : ' Try again.'}`, 'bad');
+    setMsg(`✗ <b>${san}</b> isn't the move here.${cur.tries >= 2 ? ' The arrow shows it.' : ' Try again.'}`, 'bad');
     if (cur.tries >= 2) showMove(false);
   }
-  const prev = cur.pos > 0 ? sq(cur.ref.line.nodes[cur.pos - 1].uci) : undefined;
+  const last = cur.played[cur.played.length - 1];
   later(() => {
-    cg.set({ lastMove: prev });
+    cg.set({ lastMove: last ? sq(last.uci) : undefined });
     syncBoard(true);
   }, 0);
 }
 
+async function answerSurprise(u) {
+  const g = gen;
+  const fenBefore = cur.chess.fen();
+  const mv = playMove(u, { offbook: true });
+  cur.phase = 'judging';
+  syncBoard(false);
+  renderMoves();
+  setMsg(`<b>${mv.san}</b> — checking with Stockfish…`, '');
+  let verdict;
+  try {
+    verdict = await judge(cur.before, cur.chess.fen());
+  } catch (err) {
+    verdict = null;
+  }
+  if (g !== gen) return;
+  if (!verdict) {
+    setMsg(`Couldn't run Stockfish on this device, so this one counts as a pass.`, '');
+    return finishLine(true);
+  }
+  const bestSan = verdict.best ? new Chess(fenBefore).move({ from: verdict.best.slice(0, 2), to: verdict.best.slice(2, 4), promotion: verdict.best[4] }).san : null;
+  const isBest = verdict.best === u;
+  const bestNote = bestSan && !isBest ? ` Stockfish's choice was <b>${bestSan}</b>.` : '';
+  if (verdict.best && !isBest) cg.setAutoShapes([{ orig: sq(verdict.best)[0], dest: sq(verdict.best)[1], brush: 'green' }]);
+  if (verdict.label === 'blunder') {
+    cur.mistakes++;
+    cur.blunder = { fenBefore };
+    setMsg(`✗ <b>${mv.san}</b> is a blunder (${scoreText(verdict.after, true)} after it).${bestNote}`, 'bad');
+    return finishLine(true);
+  }
+  const how = isBest ? 'the best move' : { good: 'a good move', inaccuracy: 'OK — a slight inaccuracy', mistake: 'not a blunder, but a mistake' }[verdict.label];
+  setMsg(`✓ <b>${mv.san}</b> is ${how}.${bestNote}`, verdict.label === 'mistake' ? 'info' : 'good');
+  finishLine(true);
+}
+
 function showMove(counts = true) {
-  if (!cur || cur.finished || !isUserMove(cur.pos)) return;
+  if (!cur || cur.phase !== 'line' || !isUserMove(cur.pos)) return;
   if (counts && !cur.learn && !cur.shown) cur.mistakes++;
   cur.shown = true;
-  const [a, b] = sq(cur.ref.line.nodes[cur.pos].uci);
+  const [a, b] = sq(nodes()[cur.pos].uci);
   cg.setAutoShapes([{ orig: a, dest: b, brush: 'blue' }]);
 }
 
-function finishLine() {
-  cur.finished = true;
+// keepMsg: the surprise verdict is already on screen
+function finishLine(keepMsg = false) {
+  cur.phase = 'done';
   syncBoard(false);
   const ref = cur.ref;
   const key = ref.line.key;
   const e = db.entries[key];
   const now = Date.now();
   const ok = cur.mistakes === 0;
-  const graded = !ref.practice && !ref.retry && !cur.again;
+  const graded = !ref.practice && !ref.retry && !ref.random && !cur.again;
   let note = '';
   if (graded) {
     const b = cur.learn ? 1 : ok ? Math.min((e ? e.b : 0) + 1, MAX_BOX) : 1;
@@ -671,79 +811,228 @@ function finishLine() {
     if (!ok && session.kind !== 'line') session.queue.push({ ...ref, retry: true });
   }
   session.done.push({ ok });
-  cg.setAutoShapes(studyShapes());
-  if (cur.learn) setMsg(`Line learned.${note}`, 'good');
-  else if (ok) setMsg(`✓ Perfect.${note}`, 'good');
-  else setMsg(`Done with ${cur.mistakes} mistake${cur.mistakes === 1 ? '' : 's'}.${note}${graded && session.kind !== 'line' ? " You'll see it again at the end of this session." : ''}`, 'bad');
-  $('#d-play').hidden = true;
-  $('#d-done').hidden = false;
-  $('#d-count').textContent = session.queue.length > 1 ? `Line ${session.i + 1} of ${session.queue.length}` : '';
-  const last = session.i >= session.queue.length - 1;
-  $('#btn-next').textContent = last ? 'Finish' : 'Next line →';
-  $('#d-progress').style.width = ((session.i + 1) / session.queue.length) * 100 + '%';
-  renderMoves(true);
+  if (!keepMsg) {
+    cg.setAutoShapes(studyShapes(cur.pos));
+    if (cur.learn) setMsg(`Line learned.${note}`, 'good');
+    else if (ok) setMsg(`✓ Perfect.${note}`, 'good');
+    else setMsg(`Done with ${cur.mistakes} mistake${cur.mistakes === 1 ? '' : 's'}.${note}${graded && session.kind !== 'line' ? " You'll see it again at the end of this session." : ''}`, 'bad');
+  }
+  showRow('done');
+  $('#btn-again').textContent = cur.blunder ? 'Try another move' : 'Retry line';
+  $('#btn-next').textContent = hasNext() ? 'Next line →' : 'Done ✓';
+  renderCount();
+  cur.view = cur.played.length;
+  renderMoves();
+  renderNotes();
+}
+
+// is there something after this line — the rest of the queue, or a fresh batch for the same scope?
+function hasNext() {
+  if (session.kind === 'random') return true;
+  if (session.i < session.queue.length - 1) return true;
+  return ['due', 'new', 'both'].includes(session.kind) && nextBatch().length > 0;
+}
+function nextBatch() {
+  const seen = new Set(session.queue.map((r) => r.line.key));
+  return batchFor(session).filter((r) => !seen.has(r.line.key) || lineState(r.line.key) === 'due');
 }
 
 function nextLine() {
   if (!session) return;
+  if (session.kind === 'random') {
+    session.queue.push(randomRef());
+    session.i++;
+    return loadLine();
+  }
+  if (session.i >= session.queue.length - 1 && ['due', 'new', 'both'].includes(session.kind)) {
+    session.queue.push(...nextBatch());
+  }
   if (session.i < session.queue.length - 1) {
     session.i++;
     return loadLine();
   }
   endSession();
 }
+
 function endSession() {
   gen++;
   const n = session.done.length;
   const perfect = session.done.filter((d) => d.ok).length;
   const opts = { kind: session.kind, study: session.study, chapter: session.chapter, key: session.key, title: session.title };
-  $('#d-play').hidden = true;
-  $('#d-done').hidden = true;
+  showRow(null);
   $('#d-count').textContent = '';
   $('#d-progress').style.width = '100%';
   const t = tally(refsFor(opts.kind === 'line' ? { key: opts.key } : opts));
-  const moreNew = opts.kind !== 'line' && opts.kind !== 'practice' && opts.kind !== 'due' && t.new > 0;
   setMsg(
-    `<b>Session complete.</b> ${n} line${n === 1 ? '' : 's'}, ${perfect} perfect.` +
+    `<b>All done.</b> ${n} line${n === 1 ? '' : 's'}, ${perfect} perfect.${t.next < Infinity ? ` Next review in ${until(t.next)}.` : ''}` +
       `<div class="row" style="margin-top:10px">` +
-      (moreNew ? `<button class="btn primary grow" id="more">Learn ${Math.min(t.new, +db.settings.newPer)} more</button>` : '') +
-      `<button class="btn grow" id="practice">Practice these again</button></div>`,
+      `<button class="btn primary grow" id="end-home">Back to library</button>` +
+      `<button class="btn grow" id="end-practice">Practice these again</button>` +
+      `<button class="btn grow" id="end-random">Random lines</button></div>`,
     'good',
   );
   const done = session.queue.filter((r) => !r.retry);
-  $('#more') && ($('#more').onclick = () => startSession({ ...opts, kind: opts.kind === 'new' ? 'new' : 'both' }));
-  $('#practice').onclick = () => {
+  $('#end-home').onclick = showHome;
+  $('#end-random').onclick = () => startSession({ ...opts, kind: 'random', title: 'Random lines' });
+  $('#end-practice').onclick = () => {
     session = { ...opts, kind: 'practice', queue: shuffle(done.map((r) => ({ ...r, practice: true, retry: false }))), i: 0, done: [] };
     loadLine();
   };
 }
 
-function renderMoves(all = false) {
-  const nodes = cur.ref.line.nodes;
-  const ut = userTurn();
-  const upto = all ? nodes.length : cur.pos;
-  const parts = [];
-  for (let k = 0; k < upto; k++) {
-    const n = nodes[k];
-    const ply = n.ply - 1;
-    const num = ply % 2 === 0 ? `${Math.floor(ply / 2) + 1}.` : k === 0 ? `${Math.floor(ply / 2) + 1}…` : '';
-    const you = n.parent.fen.split(' ')[1] === ut;
-    parts.push(`<span class="${you ? 'you' : ''}">${num}${esc(n.san)}${n.ann ? esc(n.ann) : ''}</span>`);
+// ---------- play on vs Maia ----------
+function startVsMaia() {
+  if (!cur || cur.phase !== 'done') return;
+  gen++;
+  // continue from the real end of the game, not a replay position
+  cur.phase = 'play';
+  cur.view = null;
+  cur.blunder = null;
+  syncBoard(false);
+  cg.setAutoShapes([]);
+  showRow('vs');
+  renderMoves();
+  renderNotes();
+  vsTurn();
+}
+function vsTurn() {
+  const c = cur.chess;
+  if (c.isGameOver()) {
+    const why = c.isCheckmate() ? (c.turn() === userTurn() ? 'Checkmate — Maia wins.' : 'Checkmate — you win!') : c.isStalemate() ? 'Stalemate.' : 'Draw.';
+    setMsg(`${why} Take back to try again, or move on.`, c.isCheckmate() && c.turn() !== userTurn() ? 'good' : '');
+    return syncBoard(false);
   }
-  if (!all && cur.pos < nodes.length && isUserMove(cur.pos)) parts.push('<span class="cur">?</span>');
-  const intro = nodes[0].ply > 1 || nodes[0].parent.fen !== START ? '<span class="muted">(from position) </span>' : '';
+  if (c.turn() === userTurn()) {
+    syncBoard(true);
+    return;
+  }
+  syncBoard(false);
+  setMsg('Maia is thinking…', '');
+  const g = gen;
+  maiaMoves(fens())
+    .then((moves) => {
+      if (g !== gen || cur.phase !== 'play') return;
+      const pick = pickHuman(moves);
+      const mv = playMove(pick.uci, { offbook: true });
+      setMsg(`Maia played <b>${mv.san}</b>. Your move.`, '');
+      renderMoves();
+      vsTurn();
+    })
+    .catch(() => g === gen && setMsg("Couldn't start Maia on this device.", 'bad'));
+}
+function playVsMaia(u) {
+  playMove(u, { offbook: true });
+  cg.setAutoShapes([]);
+  renderMoves();
+  vsTurn();
+}
+function takeBack() {
+  if (!cur || cur.phase !== 'play') return;
+  const min = cur.vsStart ?? 0;
+  // undo back to your last move (Maia's reply plus yours)
+  do {
+    if (cur.played.length <= min) break;
+    cur.chess.undo();
+    cur.played.pop();
+  } while (cur.chess.turn() !== userTurn());
+  gen++;
+  const last = cur.played[cur.played.length - 1];
+  cg.set({ lastMove: last ? sq(last.uci) : undefined });
+  cg.setAutoShapes([]);
+  renderMoves();
+  setMsg('Taken back. Your move.', '');
+  vsTurn();
+}
+async function evaluateNow() {
+  if (!cur) return;
+  const fen = cur.chess.fen();
+  setMsg('Stockfish is looking…', '');
+  try {
+    const s = await analyse(fen, 1500);
+    if (!cur || cur.chess.fen() !== fen) return;
+    // show the score from your side
+    const yours = cur.chess.turn() === userTurn() ? s : s.mate !== undefined ? { mate: -s.mate } : { cp: -s.cp };
+    const best = s.best ? new Chess(fen).move({ from: s.best.slice(0, 2), to: s.best.slice(2, 4), promotion: s.best[4] }).san : null;
+    setMsg(`Stockfish: <b>${scoreText(yours)}</b> for you${best ? ` · best here is <b>${best}</b>` : ''}.`, '');
+    if (s.best) cg.setAutoShapes([{ orig: sq(s.best)[0], dest: sq(s.best)[1], brush: 'green' }]);
+  } catch {
+    setMsg("Couldn't run Stockfish on this device.", 'bad');
+  }
+}
+
+// ---------- moves, replay, notes ----------
+function renderMoves() {
+  const played = cur.played;
+  const replay = cur.phase === 'done' && cur.view !== null;
+  const parts = played.map((p, k) => {
+    const num = moveNo(k, false);
+    const cls = [p.you ? 'you' : '', p.offbook ? 'off' : '', replay && cur.view === k + 1 ? 'on' : ''].filter(Boolean).join(' ');
+    const ann = p.node && p.node.ann ? esc(p.node.ann) : '';
+    return `<button class="mv ${cls}" data-k="${k + 1}" ${replay ? '' : 'tabindex="-1"'}>${num}${esc(p.san)}${ann}</button>`;
+  });
+  if (cur.phase === 'line' && cur.pos < nodes().length && isUserMove(cur.pos)) parts.push('<span class="cur">?</span>');
+  if (cur.phase === 'offbook') parts.push('<span class="cur">?</span>');
+  const intro = cur.root.fen !== START ? '<span class="muted">(from position) </span>' : '';
   $('#moves').innerHTML = intro + (parts.join(' ') || '<span class="muted">…</span>');
+  $('#moves').classList.toggle('replay', replay);
+  $('#replay').hidden = !replay;
+}
+
+// replay: view = how many plies are on the board
+function setView(k) {
+  if (!cur || cur.phase !== 'done') return;
+  cur.view = Math.max(0, Math.min(cur.played.length, k));
+  const p = cur.played[cur.view - 1];
+  const fen = p ? p.fen : cur.root.fen;
+  const c = new Chess(fen);
+  const turn = c.turn() === 'w' ? 'white' : 'black';
+  cg.set({ fen, lastMove: p ? sq(p.uci) : undefined, turnColor: turn, check: c.inCheck() ? turn : false, movable: { color: undefined, dests: new Map() } });
+  const node = p ? p.node : cur.root;
+  cg.setAutoShapes(node && node.shapes ? node.shapes.map((s) => ({ ...s })) : []);
+  renderMoves();
+  renderNotes();
+}
+
+function YT(url) {
+  const m = (url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+// "(idea 5, 5:00)" → a link to that moment in the chapter's video
+function linkify(text) {
+  const vid = cur.ref.ch.video;
+  const safe = esc(text);
+  if (!vid) return safe;
+  return safe.replace(/\b(\d{1,2}):([0-5]\d)\b/g, (t, m, s) => `<a href="https://www.youtube.com/watch?v=${vid}&amp;t=${+m * 60 + +s}s" target="_blank" rel="noopener">▶ ${t}</a>`);
+}
+// first timestamp in this line's notes, for the "watch" link
+function lineVideoTime() {
+  if (!cur.ref.ch.video) return null;
+  for (const n of [cur.root, ...nodes()]) {
+    const m = (n.comment || '').match(/\b(\d{1,2}):([0-5]\d)\b/);
+    if (m) return +m[1] * 60 + +m[2];
+  }
+  return null;
 }
 
 function renderNotes() {
-  const nodes = cur.ref.line.nodes;
   const shown = [];
-  const root = nodes[0].parent;
-  if (root.comment && cur.pos === 0) shown.push(`<p>${esc(root.comment)}</p>`);
-  // most recent notes first, only for moves already on the board
-  for (let k = cur.finished ? nodes.length - 1 : cur.pos - 1; k >= 0 && shown.length < 3; k--) {
-    if (nodes[k].comment) shown.push(`<p><span class="at">${esc(moveText(k))}</span>${esc(nodes[k].comment)}</p>`);
+  const done = cur.phase === 'done' || cur.phase === 'play';
+  if (cur.phase === 'done' && cur.view !== null) {
+    // replay: the note for the move on the board
+    const p = cur.played[cur.view - 1];
+    const node = p ? p.node : cur.root;
+    if (node && node.comment) shown.push(`<p>${p ? `<span class="at">${esc(plyText(cur.view - 1))}</span>` : ''}${linkify(node.comment)}</p>`);
+    else shown.push(`<p class="muted">${p && p.offbook ? 'Off the study — no notes for this move.' : 'No note on this move.'} Step through with ◀ ▶.</p>`);
+  } else {
+    if (cur.root.comment && cur.played.length === 0) shown.push(`<p>${linkify(cur.root.comment)}</p>`);
+    // most recent notes first, only for moves already on the board
+    for (let k = cur.played.length - 1; k >= 0 && shown.length < 3; k--) {
+      const n = cur.played[k].node;
+      if (n && n.comment) shown.push(`<p><span class="at">${esc(plyText(k))}</span>${linkify(n.comment)}</p>`);
+    }
   }
+  const t = done && !cur.surprised ? lineVideoTime() : null;
+  if (t !== null) shown.push(`<p><a href="https://www.youtube.com/watch?v=${cur.ref.ch.video}&amp;t=${t}s" target="_blank" rel="noopener">▶ Watch this idea in the video (${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')})</a></p>`);
   $('#notes').innerHTML = shown.join('');
   $('#notes-card').hidden = !shown.length;
 }
@@ -756,23 +1045,71 @@ function setMsg(html, kind) {
 
 $('#btn-next').onclick = nextLine;
 $('#btn-again').onclick = () => {
+  if (cur && cur.blunder) {
+    // undo your reply and try another answer to Maia's surprise
+    gen++;
+    cur.chess.undo();
+    cur.played.pop();
+    cur.blunder = null;
+    cur.phase = 'offbook';
+    session.done.pop();
+    const last = cur.played[cur.played.length - 1];
+    cg.set({ lastMove: last ? sq(last.uci) : undefined });
+    cg.setAutoShapes([]);
+    showRow('play');
+    syncBoard(true);
+    cur.view = null;
+    renderMoves();
+    renderNotes();
+    setMsg(`Try another reply to <b>${last.san}</b>.`, 'info');
+    return;
+  }
   loadLine(true);
-  cur.again = true;
 };
-$('#btn-skip').onclick = nextLine;
+$('#btn-skip').onclick = () => {
+  if (session && session.kind === 'random' && cur && cur.phase !== 'done') session.done.push({ ok: false });
+  nextLine();
+};
 $('#btn-show').onclick = () => showMove(true);
 $('#btn-hint').onclick = () => {
-  if (!cur || cur.finished || !isUserMove(cur.pos)) return;
+  if (!cur || cur.phase !== 'line' || !isUserMove(cur.pos)) return;
   if (!cur.learn && !cur.shown) cur.mistakes++;
   cur.shown = true;
-  cg.setAutoShapes([{ orig: sq(cur.ref.line.nodes[cur.pos].uci)[0], brush: 'blue' }]);
+  cg.setAutoShapes([{ orig: sq(nodes()[cur.pos].uci)[0], brush: 'blue' }]);
   setMsg('Hint: the circled piece moves.', 'info');
+};
+$('#btn-vs').onclick = () => {
+  if (cur) cur.vsStart = cur.played.length;
+  startVsMaia();
+};
+$('#btn-takeback').onclick = takeBack;
+$('#btn-eval').onclick = evaluateNow;
+$('#btn-stopvs').onclick = () => {
+  if (!cur) return;
+  gen++;
+  cur.phase = 'done';
+  showRow('done');
+  setView(cur.played.length);
+  setMsg('Back to the line. Step through it with ◀ ▶, or move on.', '');
+};
+$('#moves').onclick = (e) => {
+  const b = e.target.closest('button[data-k]');
+  if (b && cur && cur.phase === 'done') setView(+b.dataset.k);
+};
+$('#replay').onclick = (e) => {
+  const b = e.target.closest('button[data-step]');
+  if (!b || !cur) return;
+  const s = b.dataset.step;
+  setView(s === 'start' ? 0 : s === 'end' ? cur.played.length : cur.view + +s);
 };
 $('#btn-home').onclick = showHome;
 $('#home-link').onclick = () => session && showHome();
 document.addEventListener('keydown', (e) => {
   if ($('#drill').hidden || e.target.matches('input, select, textarea')) return;
-  if ((e.key === 'Enter' || e.key === 'n') && cur && cur.finished) nextLine();
+  if (cur && cur.phase === 'done' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault();
+    setView(cur.view + (e.key === 'ArrowLeft' ? -1 : 1));
+  } else if ((e.key === 'Enter' || e.key === 'n') && cur && cur.phase === 'done') nextLine();
   else if (e.key === 'h') $('#btn-hint').click();
   else if (e.key === 'Escape') showHome();
 });
@@ -841,4 +1178,4 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 // test hook for local development only
-if (location.hostname === 'localhost') window.__drill = { expected: () => cur && !cur.finished && cur.ref.line.nodes[cur.pos] && isUserMove(cur.pos) ? cur.ref.line.nodes[cur.pos].uci : null, db: () => db };
+if (location.hostname === 'localhost') window.__drill = { expected: () => (cur && cur.phase === 'line' && cur.ref.line.nodes[cur.pos] && isUserMove(cur.pos) ? cur.ref.line.nodes[cur.pos].uci : null), cur: () => cur, db: () => db };
