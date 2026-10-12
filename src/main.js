@@ -628,6 +628,8 @@ function advance() {
       if (cur.pos !== pos || cur.phase !== 'line' || cur.shown) return;
       cg.setAutoShapes([...studyShapes(pos), { orig: sq(line[pos].uci)[0], dest: sq(line[pos].uci)[1], brush: 'blue' }]);
       setMsg(`Play <b>${moveText(line[pos])}</b> (the blue arrow).`, 'info');
+      cur.noteAhead = pos;
+      renderNotes();
     }, ARROW_DELAY);
   } else if (cur.pos > 0) {
     setMsg(`Your move — after <b>${moveText(line[cur.pos - 1])}</b>.`, '');
@@ -1083,7 +1085,10 @@ function YT(url) {
 // "(idea 5, 5:00)" → a link to that moment in the chapter's video
 function linkify(text) {
   const vid = cur.ref.ch.video;
-  const safe = esc(text);
+  const safe = esc(text).replace(/\s*\[([^\]]+)\]/g, (_, inner) => {
+    const pct = inner.match(/plays this in (\d+)% of games/);
+    return ` <span class="tag">${pct ? `played in ${pct[1]}% of games` : inner}</span>`;
+  });
   if (!vid) return safe;
   return safe.replace(/\b(\d{1,2}):([0-5]\d)\b/g, (t, m, s) => `<a href="https://www.youtube.com/watch?v=${vid}&amp;t=${+m * 60 + +s}s" target="_blank" rel="noopener">▶ ${t}</a>`);
 }
@@ -1097,27 +1102,37 @@ function lineVideoTime() {
   return null;
 }
 
+function noteHtml(label, text, { cls = '', you = false, kicker = '' } = {}) {
+  const chip = label ? `<span class="mvchip${you ? ' you' : ''}">${esc(label)}</span>` : '';
+  return `<div class="note ${cls}">${chip}<div class="body">${kicker ? `<span class="kicker">${kicker}</span>` : ''}${linkify(text)}</div></div>`;
+}
+
 function renderNotes() {
-  const shown = [];
-  const done = cur.phase === 'done' || cur.phase === 'play';
+  const out = [];
   if (cur.phase === 'done' && cur.view !== null) {
     // replay: the note for the move on the board
     const p = cur.played[cur.view - 1];
     const node = p ? p.node : cur.root;
-    if (node && node.comment) shown.push(`<p>${p ? `<span class="at">${esc(plyText(cur.view - 1))}</span>` : ''}${linkify(node.comment)}</p>`);
-    else shown.push(`<p class="muted">${p && p.offbook ? 'Off the study — no notes for this move.' : 'No note on this move.'} Step through with ◀ ▶.</p>`);
+    if (node && node.comment) out.push(noteHtml(p ? plyText(cur.view - 1) : '', node.comment, { you: p && p.you }));
+    else out.push(`<div class="note-empty">${p && p.offbook ? 'Off the study — no notes for this move.' : 'No note on this move.'} Step through with ◀ ▶.</div>`);
   } else {
-    if (cur.root.comment && cur.played.length === 0) shown.push(`<p>${linkify(cur.root.comment)}</p>`);
-    // most recent notes first, only for moves already on the board
-    for (let k = cur.played.length - 1; k >= 0 && shown.length < 3; k--) {
-      const n = cur.played[k].node;
-      if (n && n.comment) shown.push(`<p><span class="at">${esc(plyText(k))}</span>${linkify(n.comment)}</p>`);
+    // teach mode: why the move you're about to play, revealed together with its arrow
+    const next = cur.phase === 'line' && cur.learn && cur.noteAhead === cur.pos ? nodes()[cur.pos] : null;
+    if (next && next.comment) out.push(noteHtml(moveText(next), next.comment, { cls: 'next', you: true, kicker: 'Your move' }));
+    if (cur.root.comment && cur.played.length === 0) out.push(noteHtml('', cur.root.comment));
+    // then the latest notes for moves already on the board, newest first
+    let shown = 0;
+    for (let k = cur.played.length - 1; k >= 0 && out.length < 2; k--) {
+      const node = cur.played[k].node;
+      if (!node || !node.comment) continue;
+      out.push(noteHtml(plyText(k), node.comment, { cls: shown++ ? 'old' : '', you: cur.played[k].you }));
     }
   }
+  const done = cur.phase === 'done' || cur.phase === 'play';
   const t = done && !cur.surprised ? lineVideoTime() : null;
-  if (t !== null) shown.push(`<p><a href="https://www.youtube.com/watch?v=${cur.ref.ch.video}&amp;t=${t}s" target="_blank" rel="noopener">▶ Watch this idea in the video (${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')})</a></p>`);
-  $('#notes').innerHTML = shown.join('');
-  $('#notes-card').hidden = !shown.length;
+  if (t !== null) out.push(`<div class="note-watch"><a href="https://www.youtube.com/watch?v=${cur.ref.ch.video}&amp;t=${t}s" target="_blank" rel="noopener">▶ Watch this idea in the video (${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')})</a></div>`);
+  $('#notes').innerHTML = out.join('');
+  $('#notes-card').hidden = !out.length;
 }
 
 function setMsg(html, kind) {

@@ -102,7 +102,9 @@ details.chapters > summary { cursor: pointer; font-size: 13px; color: var(--mute
 /* ---------- drill ---------- */
 #drill { max-width: 1060px; margin: 0 auto; padding: 8px 16px 32px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
 @media (max-width: 820px) { #drill { grid-template-columns: minmax(0, 1fr); gap: 14px; } }
-.board-wrap { width: 100%; max-width: 640px; justify-self: center; position: relative; }
+.board-col { width: 100%; max-width: 640px; justify-self: center; display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 820px) { .board-col { gap: 10px; } }
+.board-wrap { width: 100%; position: relative; }
 #board { width: 100%; aspect-ratio: 1; border-radius: 4px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
 #board .cg-wrap { width: 100%; height: 100%; }
 .side { display: flex; flex-direction: column; gap: 12px; }
@@ -130,10 +132,21 @@ details.chapters > summary { cursor: pointer; font-size: 13px; color: var(--mute
 #moves .cur { background: var(--accent); color: #fff; border-radius: 4px; padding: 0 4px; }
 .replay { display: flex; gap: 6px; margin-top: 10px; }
 .replay .btn { flex: 1; }
+.notes-card { padding: 12px 14px; }
 #notes a { color: var(--accent); font-weight: 600; text-decoration: none; }
-#notes { font-size: 14px; }
-#notes p { margin: 0 0 6px; } #notes p:last-child { margin: 0; }
-#notes .at { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 4px; }
+.note { display: flex; gap: 10px; align-items: flex-start; }
+.note + .note { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.note .mvchip { flex: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: var(--btn); color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.note .mvchip.you { background: var(--accent); color: #fff; }
+.note .body { flex: 1; min-width: 0; font-size: 15px; line-height: 1.5; }
+.note .body .tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--btn); border-radius: 99px; padding: 1px 8px; margin: 2px 0 0; white-space: nowrap; }
+.note .kicker { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--info); margin-bottom: 2px; }
+.note.next { background: var(--info-bg); margin: -4px -6px 0; padding: 8px 10px; border-radius: 8px; border-top: 0; }
+.note.next + .note { border-top: 0; }
+.note.old .body { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.note.old .mvchip { opacity: .7; }
+.note-empty { font-size: 13px; color: var(--muted); }
+.note-watch { margin-top: 10px; font-size: 13px; }
 .card-h { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
 #promo { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.45); z-index: 10; border-radius: 4px; }
 #promo .box { background: var(--panel); padding: 12px; border-radius: 10px; display: flex; gap: 6px; }
@@ -227,12 +240,17 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
 </div>
 
 <main id="drill" hidden>
+  <div class="board-col">
   <div class="board-wrap">
     <div id="board"></div>
     <div id="promo" hidden><div class="box">
       <button data-p="q" aria-label="Queen">♕</button><button data-p="r" aria-label="Rook">♖</button>
       <button data-p="b" aria-label="Bishop">♗</button><button data-p="n" aria-label="Knight">♘</button>
     </div></div>
+  </div>
+  <section class="card notes-card" id="notes-card" hidden>
+    <div id="notes"></div>
+  </section>
   </div>
   <div class="side">
     <section class="card">
@@ -272,10 +290,6 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
         <button class="btn sm" data-step="1" aria-label="Forward">▶</button>
         <button class="btn sm" data-step="end" aria-label="End">⏭</button>
       </div>
-    </section>
-    <section class="card" id="notes-card" hidden>
-      <div class="card-h">Study notes</div>
-      <div id="notes"></div>
     </section>
   </div>
 </main>
