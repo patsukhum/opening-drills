@@ -1,7 +1,7 @@
 import { Chess } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
 import { parsePgn, chapterName, sharedPrefix, guessColor, extractLines, lineLabel, START } from './pgn.js';
-import { createSync, POLGAR_SYNC_KEY } from './sync.js';
+import { createSync, cleanCode } from './sync.js';
 import { maiaMoves, pickHuman, analyse, judge, scoreText } from './engines.js';
 
 const STORE_KEY = 'opening-drills-v1';
@@ -1252,11 +1252,7 @@ function renderSync(st) {
   const on = st.state !== 'off';
   $('#sync-setup').hidden = on;
   $('#sync-on').hidden = !on;
-  let polgar = null;
-  try {
-    polgar = JSON.parse(localStorage.getItem(POLGAR_SYNC_KEY));
-  } catch {}
-  $('#sync-reuse').hidden = on || !(polgar && polgar.token);
+  $('#sync-code-label').textContent = st.code || sync.code;
   $('#sync-status').textContent = {
     off: '',
     syncing: 'Syncing…',
@@ -1267,20 +1263,46 @@ function renderSync(st) {
   $('#sync-status').className = 'sync-status ' + st.state;
   $('#sync-dot').className = 'dot ' + st.state;
 }
-$('#sync-connect').onclick = async () => {
-  const token = $('#sync-token').value.trim();
-  if (!token) return $('#sync-token').focus();
-  $('#sync-token').value = '';
-  await sync.connect(token);
+function syncNote(text, error = false) {
+  $('#sync-msg').hidden = !text;
+  $('#sync-msg').textContent = text || '';
+  $('#sync-msg').className = 'sync-status' + (error ? ' error' : '');
+}
+$('#sync-code').oninput = (e) => {
+  const v = cleanCode(e.target.value).slice(0, 5);
+  if (e.target.value !== v) e.target.value = v;
 };
-$('#sync-reuse-btn').onclick = async () => {
+$('#sync-join').onclick = async () => {
+  const code = cleanCode($('#sync-code').value);
+  if (code.length !== 5) {
+    syncNote('Codes are 5 letters.', true);
+    return $('#sync-code').focus();
+  }
+  syncNote('Connecting…');
   try {
-    await sync.connect(JSON.parse(localStorage.getItem(POLGAR_SYNC_KEY)).token);
-  } catch {}
+    const ok = await sync.join(code);
+    if (ok) {
+      syncNote('');
+      $('#sync-code').value = '';
+    } else syncNote(`No sync found for ${code}. Check the letters — or create a new code on your first device.`, true);
+  } catch (e) {
+    syncNote(navigator.onLine ? `Couldn't connect: ${e.message}` : "You're offline — connect to the internet to set up sync.", true);
+  }
+};
+$('#sync-code').onkeydown = (e) => e.key === 'Enter' && $('#sync-join').click();
+$('#sync-create').onclick = async () => {
+  if (!confirm("Create a new sync code from this device's studies and progress? Use it on your other devices.")) return;
+  syncNote('Creating…');
+  try {
+    await sync.create();
+    syncNote('');
+  } catch (e) {
+    syncNote(navigator.onLine ? `Couldn't create a code: ${e.message}` : "You're offline — connect to the internet to set up sync.", true);
+  }
 };
 $('#sync-now').onclick = () => sync.sync();
 $('#sync-off').onclick = () => {
-  if (confirm('Stop syncing on this device? Your studies and progress stay here and in the gist.')) sync.disconnect();
+  if (confirm(`Stop syncing on this device? Your studies and progress stay here, and under code ${sync.code}.`)) sync.disconnect();
 };
 
 renderHome();

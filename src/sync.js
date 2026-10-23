@@ -1,11 +1,12 @@
-// Studies + progress sync through a private GitHub gist.
+// Studies + progress sync by a short code, stored in Supabase (see supabase/sync.sql).
 // State shape: { entries: { [lineKey]: { b, d, t } }, studies: { [id]: { ..., t, del? } }, resetAt: ms }
 // Merge is last-write-wins per line and per study; a reset wipes progress older than it.
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
-const SYNC_KEY = 'opening-drills-sync';
-export const POLGAR_SYNC_KEY = 'polgar-m2-sync';
-const FILE = 'opening-drills.json';
-const API = 'https://api.github.com';
+const SYNC_KEY = 'opening-drills-code';
+// no 0/O, 1/I/L — easy to read off one screen and type on another
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const cleanCode = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 function lww(a = {}, b = {}, floor = 0) {
   const out = {};
@@ -30,6 +31,20 @@ const stable = (v) =>
     : JSON.stringify(v);
 const same = (a, b) => stable(mergeStates(a, EMPTY)) === stable(mergeStates(b, EMPTY));
 
+async function rpc(fn, args) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) throw new Error(`server error ${res.status}`);
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+const readRemote = (code) => rpc('drill_get', { p_code: code });
+const writeRemote = (code, state) => rpc('drill_put', { p_code: code, p_state: state });
+
 export function createSync({ getState, applyState, onStatus }) {
   let cfg = {};
   try {
@@ -41,87 +56,24 @@ export function createSync({ getState, applyState, onStatus }) {
     } catch {}
   };
 
-  async function gh(path, opts = {}) {
-    const res = await fetch(API + path, {
-      ...opts,
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${cfg.token}`,
-        ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
-      },
-    });
-    if (res.status === 401) throw new Error('GitHub rejected the token — check it has the "gist" scope.');
-    if (res.status === 404) throw Object.assign(new Error('Gist not found.'), { notFound: true });
-    if (!res.ok) throw new Error(`GitHub error ${res.status}`);
-    return res.json();
-  }
-
-  async function findOrCreateGist() {
-    for (let page = 1; page <= 10; page++) {
-      const list = await gh(`/gists?per_page=100&page=${page}`);
-      const hit = list.find((g) => g.files && g.files[FILE]);
-      if (hit) return hit.id;
-      if (list.length < 100) break;
-    }
-    const g = await gh('/gists', {
-      method: 'POST',
-      body: JSON.stringify({
-        description: 'Opening Drills — studies and progress (synced by the app)',
-        public: false,
-        files: { [FILE]: { content: JSON.stringify(getState()) } },
-      }),
-    });
-    return g.id;
-  }
-
-  async function readRemote() {
-    const g = await gh(`/gists/${cfg.gistId}`);
-    const f = g.files[FILE];
-    if (!f) return EMPTY;
-    const text = f.truncated ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return EMPTY;
-    }
-  }
-
   let running = null;
   let again = false;
 
   async function run() {
-    if (!cfg.token) return onStatus({ state: 'off' });
-    if (!navigator.onLine) return onStatus({ state: 'offline', at: cfg.lastSync });
-    onStatus({ state: 'syncing', at: cfg.lastSync });
+    if (!cfg.code) return onStatus({ state: 'off' });
+    if (!navigator.onLine) return onStatus({ state: 'offline', at: cfg.lastSync, code: cfg.code });
+    onStatus({ state: 'syncing', at: cfg.lastSync, code: cfg.code });
     try {
-      if (!cfg.gistId) {
-        cfg.gistId = await findOrCreateGist();
-        saveCfg();
-      }
-      let remote;
-      try {
-        remote = await readRemote();
-      } catch (e) {
-        if (!e.notFound) throw e;
-        cfg.gistId = await findOrCreateGist(); // gist was deleted — start a new one
-        saveCfg();
-        remote = await readRemote();
-      }
+      const remote = (await readRemote(cfg.code)) || EMPTY;
       const local = getState();
       const merged = mergeStates(local, remote);
-      if (!same(merged, remote)) {
-        await gh(`/gists/${cfg.gistId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ files: { [FILE]: { content: JSON.stringify(merged) } } }),
-        });
-      }
+      if (!same(merged, remote)) await writeRemote(cfg.code, merged);
       if (!same(merged, local)) applyState(merged);
       cfg.lastSync = Date.now();
       saveCfg();
-      onStatus({ state: 'ok', at: cfg.lastSync });
+      onStatus({ state: 'ok', at: cfg.lastSync, code: cfg.code });
     } catch (e) {
-      onStatus({ state: 'error', message: e.message || String(e), at: cfg.lastSync });
+      onStatus({ state: 'error', message: navigator.onLine ? e.message || String(e) : "you're offline", at: cfg.lastSync, code: cfg.code });
     }
   }
 
@@ -151,12 +103,38 @@ export function createSync({ getState, applyState, onStatus }) {
 
   return {
     get connected() {
-      return !!cfg.token;
+      return !!cfg.code;
     },
-    async connect(token) {
-      cfg = { token: token.trim() };
+    get code() {
+      return cfg.code || '';
+    },
+    // join an existing code; resolves false if nobody has used that code yet
+    async join(raw) {
+      const code = cleanCode(raw);
+      if (code.length !== 5) throw new Error('Codes are 5 letters.');
+      onStatus({ state: 'syncing', code });
+      const remote = await readRemote(code);
+      if (!remote) {
+        onStatus({ state: 'off' });
+        return false;
+      }
+      cfg = { code };
       saveCfg();
       await sync();
+      return true;
+    },
+    // start a new code from this device's studies and progress
+    async create() {
+      for (let tries = 0; tries < 5; tries++) {
+        const code = Array.from(crypto.getRandomValues(new Uint32Array(5)), (n) => ALPHABET[n % ALPHABET.length]).join('');
+        if (await readRemote(code)) continue; // taken — try another
+        await writeRemote(code, getState());
+        cfg = { code };
+        saveCfg();
+        await sync();
+        return code;
+      }
+      throw new Error("Couldn't find a free code — try again.");
     },
     disconnect() {
       cfg = {};
