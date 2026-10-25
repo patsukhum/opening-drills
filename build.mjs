@@ -7,7 +7,8 @@ const bundle = async (entry) =>
   (await build({ entryPoints: [entry], bundle: true, minify: true, format: 'iife', write: false, target: 'es2019' })).outputFiles[0].text;
 const js = await bundle('src/main.js');
 let html = fs.readFileSync('src/index.html', 'utf8');
-html = html.replace('/*CG_CSS*/', () => css).replace('/*APP_JS*/', () => js.replace(/<\/script/gi, '<\\/script'));
+const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+html = html.replace('/*BUILD*/', stamp).replace('/*CG_CSS*/', () => css).replace('/*APP_JS*/', () => js.replace(/<\/script/gi, '<\\/script'));
 fs.mkdirSync('docs/engine', { recursive: true });
 fs.writeFileSync('docs/index.html', html);
 // engines load on demand: Maia (human-like moves) and Stockfish (blunder checks)

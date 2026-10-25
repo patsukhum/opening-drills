@@ -1268,10 +1268,8 @@ function syncNote(text, error = false) {
   $('#sync-msg').textContent = text || '';
   $('#sync-msg').className = 'sync-status' + (error ? ' error' : '');
 }
-$('#sync-code').oninput = (e) => {
-  const v = cleanCode(e.target.value).slice(0, 5);
-  if (e.target.value !== v) e.target.value = v;
-};
+// don't rewrite the box while typing: phone keyboards compose text, and resetting the value cancels it.
+// The code is shown in capitals by CSS and cleaned up on Connect.
 $('#sync-join').onclick = async () => {
   const code = cleanCode($('#sync-code').value);
   if (code.length !== 5) {
