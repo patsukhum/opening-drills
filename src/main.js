@@ -1288,6 +1288,28 @@ $('#sync-join').onclick = async () => {
   }
 };
 $('#sync-code').onkeydown = (e) => e.key === 'Enter' && $('#sync-join').click();
+// for the home-screen app: copy the code from a message, then tap Paste
+$('#sync-paste').onclick = async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    const code = cleanCode(text).slice(0, 5);
+    if (code.length !== 5) return syncNote("The clipboard doesn't hold a 5-letter code. Copy the code first, then tap Paste.", true);
+    $('#sync-code').value = code;
+    $('#sync-join').click();
+  } catch {
+    syncNote("This browser didn't allow pasting — long-press the box and choose Paste instead.", true);
+  }
+};
+// opening …/#sync=ABCDE connects this device without typing
+async function joinFromLink() {
+  const m = location.hash.match(/sync=([A-Za-z0-9]{5})/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (sync.connected && sync.code === cleanCode(m[1])) return;
+  $('#sync-code').value = cleanCode(m[1]);
+  $('#sync').scrollIntoView({ block: 'center' });
+  $('#sync-join').click();
+}
 $('#sync-create').onclick = async () => {
   if (!confirm("Create a new sync code from this device's studies and progress? Use it on your other devices.")) return;
   syncNote('Creating…');
@@ -1303,6 +1325,8 @@ $('#sync-off').onclick = () => {
   if (confirm(`Stop syncing on this device? Your studies and progress stay here, and under code ${sync.code}.`)) sync.disconnect();
 };
 
+joinFromLink();
+window.addEventListener('hashchange', joinFromLink); // link opened while the app is already open
 renderHome();
 renderSync({ state: sync.connected ? 'syncing' : 'off' });
 if (sync.connected) sync.sync();
